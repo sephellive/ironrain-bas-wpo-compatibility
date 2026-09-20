@@ -1,0 +1,208 @@
+-- IronRain BaS x WPO Compatibility
+-- Runtime glue only. No upstream WPO/WPOO source files are redistributed.
+
+local PATCH_VERSION = "1.0.0"
+local patched = {}
+local retry_registered = false
+
+local function is_integrally_suppressed(wpn)
+    if not wpn or not wpn.section then return false end
+    local sec = wpn:section()
+    if not sec or not system_ini():line_exist(sec, "silencer_status") then return false end
+    return system_ini():r_u32(sec, "silencer_status") == 1
+end
+
+local function replace_fired_callback(module, function_name, replacement)
+    local original = module and module[function_name]
+    if type(original) ~= "function" then return false end
+
+    UnregisterScriptCallback("actor_on_weapon_fired", original)
+    module[function_name] = replacement(original)
+    RegisterScriptCallback("actor_on_weapon_fired", module[function_name])
+    return true
+end
+
+local function patch_barrel_heat()
+    local module = _G.zz_GunTemp
+    if patched.barrel or not module then return patched.barrel end
+    local original = module.calculate_weapon_shot_heat_impact
+    if type(original) ~= "function" then return false end
+
+    module.calculate_weapon_shot_heat_impact = function(wpn, current_heat)
+        local value = original(wpn, current_heat)
+        if value and is_integrally_suppressed(wpn) then
+            return value * 1.1
+        end
+        return value
+    end
+    patched.barrel = true
+    return true
+end
+
+local function patch_advanced_wear()
+    local module = _G.zzzzzzzzzzz_wpo_aw_hardcore
+    if patched.advanced_wear or not module then return patched.advanced_wear end
+
+    local success = replace_fired_callback(module, "execute_advanced_thermodynamics_core", function(original)
+        return function(obj, item, ammo_el, gren_el, ammo_t, gren_t)
+            local integral = is_integrally_suppressed(item)
+            local id = integral and item:id() or nil
+            local before = 0
+            if id then
+                local data = se_load_var(id, nil, "wpo_o_key") or {}
+                before = data.carbon_gunk or 0
+            end
+
+            original(obj, item, ammo_el, gren_el, ammo_t, gren_t)
+
+            if id then
+                local data = se_load_var(id, nil, "wpo_o_key") or {}
+                local after = data.carbon_gunk or 0
+                local delta = after - before
+                if delta > 0 and after < 100 then
+                    local adjusted = math.min(100, after + delta * 0.1)
+                    data.carbon_gunk = adjusted
+                    se_save_var(id, nil, "wpo_o_key", data)
+
+                    if _G.live_gunk_multiplier and after > 0 then
+                        local slope = (_G.live_gunk_multiplier - 1.0) / after
+                        _G.live_gunk_multiplier = 1.0 + slope * adjusted
+                    end
+                end
+            end
+        end
+    end)
+
+    patched.advanced_wear = success
+    return success
+end
+
+local function patch_rpm_module(module, handler_name, calculator_name, state_key)
+    if patched[state_key] or not module then return patched[state_key] end
+    local original_calculator = module[calculator_name]
+    if type(original_calculator) ~= "function" then return false end
+
+    local integral_context = false
+    module[calculator_name] = function(base_rpm, part_condition)
+        local value = original_calculator(base_rpm, part_condition)
+        if value and integral_context then
+            return value * 1.05
+        end
+        return value
+    end
+
+    local success = replace_fired_callback(module, handler_name, function(original_handler)
+        return function(obj, item, ammo_elapsed, grenade_elapsed, ammo_type, grenade_type)
+            integral_context = is_integrally_suppressed(item)
+            local ok, err = pcall(
+                original_handler,
+                obj,
+                item,
+                ammo_elapsed,
+                grenade_elapsed,
+                ammo_type,
+                grenade_type
+            )
+            integral_context = false
+            if not ok then error(err) end
+        end
+    end)
+
+    patched[state_key] = success
+    return success
+end
+
+local function patch_gas_tube()
+    return patch_rpm_module(
+        _G.zzzzzzzzzzz_wpo_gas_tube_hardcore,
+        "handle_gas_tube_core_logic",
+        "calculate_realistic_gas_rpm",
+        "gas_tube"
+    )
+end
+
+local function patch_pistol_spring()
+    return patch_rpm_module(
+        _G.zzzzzzzzzzz_wpo_spring_hardcore,
+        "handle_pistol_spring_core_logic",
+        "calculate_realistic_spring_rpm",
+        "pistol_spring"
+    )
+end
+
+local function spawn_for_sakharov(npc, to_spawn, check_existing)
+    local supply = {}
+    copy_table(supply, to_spawn)
+
+    if check_existing then
+        local function inspect_inventory(_, item)
+            local section = item:section()
+            if supply[section] and supply[section] > 0 then
+                supply[section] = supply[section] - 1
+            end
+        end
+        npc:iterate_inventory(inspect_inventory)
+    end
+
+    for section, amount in pairs(supply) do
+        for _ = 1, amount do
+            alife_create_item(section, npc)
+        end
+    end
+end
+
+local function patch_trader_bridge()
+    local module = _G.trader_autoinject
+    if patched.trader or not module or type(module.spawn_items) ~= "function" then
+        return patched.trader
+    end
+
+    local original = module.spawn_items
+    module.spawn_items = function(npc, to_spawn, check_existing)
+        if npc and npc:name() == "yan_stalker_sakharov" then
+            return spawn_for_sakharov(npc, to_spawn, check_existing)
+        end
+        return original(npc, to_spawn, check_existing)
+    end
+
+    patched.trader = true
+    return true
+end
+
+local function apply_runtime_patch()
+    patch_barrel_heat()
+    patch_advanced_wear()
+    patch_gas_tube()
+    patch_pistol_spring()
+    patch_trader_bridge()
+
+    return patched.barrel
+        and patched.advanced_wear
+        and patched.gas_tube
+        and patched.pistol_spring
+        and patched.trader
+end
+
+local function retry_runtime_patch()
+    if apply_runtime_patch() then
+        UnregisterScriptCallback("actor_on_first_update", retry_runtime_patch)
+        retry_registered = false
+    end
+end
+
+local function load_state(m_data)
+    if m_data and m_data.tm_custom then
+        m_data.tm_custom = nil
+    end
+end
+
+function on_game_start()
+    RegisterScriptCallback("load_state", load_state)
+
+    if not apply_runtime_patch() and not retry_registered then
+        RegisterScriptCallback("actor_on_first_update", retry_runtime_patch)
+        retry_registered = true
+    end
+
+    _G.ir_bas_wpo_compat_version = PATCH_VERSION
+end

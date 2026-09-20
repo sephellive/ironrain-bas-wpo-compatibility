@@ -1,64 +1,175 @@
-# &lt;Addon Name&gt;
+# IronRain — BaS × WPO Compatibility
 
-Short description of the addon.
+Независимый compatibility patch для связки **Boomsticks and Sharpsticks + Weapon Parts Overhaul + Weapon Parts Overhaul Overhauled** на **S.T.A.L.K.E.R. Anomaly 1.5.3**.
 
-This repository is a template for small, independent S.T.A.L.K.E.R. Anomaly addons. Replace the placeholders, add the addon files under `gamedata`, and develop the mod without a separate build system.
+Патч закрывает отсутствующие или неправильно классифицированные детали BaS, исправляет механику интегральных глушителей WPO Overhauled и устраняет конфликт торгового runtime-кода WPO/BaS. Исходные аддоны не включены в репозиторий и должны быть установлены отдельно.
 
-## Requirements
+## Требования и оригинальные аддоны
 
-- S.T.A.L.K.E.R. Anomaly 1.5.3
-- [Anomaly Modded Exes](https://github.com/themrdemonized/xray-monolith) when the addon uses DLTX or another engine extension
-- Git LFS when the addon contains binary assets tracked by `.gitattributes`
+- [S.T.A.L.K.E.R. Anomaly 1.5.3](https://www.moddb.com/mods/stalker-anomaly)
+- [Anomaly Modded Exes](https://github.com/themrdemonized/xray-monolith) — необходим для DLTX
+- [Boomsticks and Sharpsticks — Mich_Cartman](https://www.moddb.com/mods/stalker-anomaly/addons/boomsticks-and-sharpsticks)
+- [Weapon Parts Overhaul — artifax/ahuyn](https://github.com/ahuyn/anomaly-wpo)
+- [Weapon Parts Overhaul Overhauled — Flooduh](https://www.moddb.com/mods/stalker-anomaly/addons/weapon-parts-overhaul-overhauled)
 
-## Installation
+Проверенная конфигурация:
 
-Download the ZIP from the latest GitHub Release and extract it directly into the S.T.A.L.K.E.R. Anomaly directory. The archive starts with `gamedata/`; it has no extra wrapper directory.
+- BaS `02-Oct-2022`
+- WPO archive `anomaly-wpo.2022.01.08_1.zip`
+- WPO Overhauled `1.0.6.3`
+- Anomaly `1.5.3` + актуальные Modded Exes
 
-For a local checkout, run:
+Новые версии исходных аддонов могут изменить Lua API или секции оружия. Для другой версии сначала сделайте резервную копию профиля и проверьте игру на тестовом сохранении.
+
+## Что исправлено
+
+### FN Five-seveN
+
+`wpn_fn57_bas` получает полный пистолетный набор WPO:
+
+- ствол `prt_w_p_barrel_4`;
+- УСМ `prt_w_p_trigger_1`;
+- возвратная пружина `prt_w_p_spring_4`.
+
+Ранее пружина отсутствовала, поэтому диагностика, температурная модель и spring-related отказы WPOO были неполными.
+
+### Karabiner 98k с интегральным глушителем
+
+`wpn_karabiner98k_silen98` получает тот же механический набор, что и базовый `wpn_karabiner98k`. Секция указывает `parent_section` на себя, поэтому оригинальный WPO не мог автоматически использовать строку базового Kar98k.
+
+### Семейство KS-23
+
+Для корневой секции `wpn_ks23` устанавливается `single_handed = 0`. Варианты наследуют исправление:
+
+- `wpn_ks23`;
+- `wpn_ks23_23_up`;
+- `wpn_ks23_kaban`;
+- `wpn_ks23_kaban_kab_up`.
+
+WPO Overhauled использует `single_handed` для выбора между пистолетной пружиной и длинноствольной затворно-газовой системой. Значение `1` заставляло его считать KS-23 пистолетом при наличии пяти shotgun/rifle-деталей.
+
+### Интегральные глушители
+
+WPO Overhauled 1.0.6.3 применяет дополнительные suppressor-множители только к съёмным глушителям с `silencer_status = 2`. Оружие со встроенным глушителем использует статус `1`, поэтому PB, VAL и Vintorez пропускали часть нагрева, нагара и изменения автоматики.
+
+Runtime-hook расширяет поддержку статуса `1` без превращения интегрального глушителя в съёмный и без копирования исходных Lua-файлов WPOO. Исправлены четыре подсистемы:
+
+- нагрев ствола — ×1.10;
+- накопление нагара — ×1.10;
+- газовая автоматика длинноствольного оружия — ×1.05;
+- автоматика пистолетной возвратной пружины — ×1.05.
+
+Hook общий для интегрально-глушёного оружия и автоматически охватывает оптические варианты через их исходные секции.
+
+### Конфликт `trader_autoinject`
+
+WPO и BaS содержат файл `trader_autoinject.script`. Победившая версия WPO сохраняет parts/trader API, но теряет две детали BaS:
+
+- очистку устаревшего `tm_custom` при загрузке сохранения;
+- специальную обработку профессора Сахарова (`yan_stalker_sakharov`) как furniture trader.
+
+Патч добавляет обе возможности runtime-обёрткой и не поставляет ещё одну полную копию `trader_autoinject.script`.
+
+## Gauss Rifle
+
+`wpn_gauss` и сюжетная `pri_a17_gauss_rifle` намеренно **не получают** набор из ствола, газовой трубки, затвора и затворной рамы. Это электромагнитное оружие, а не газоотводная система. Оригинальный WPO также прямо относит Gauss Rifle к оружию без parts-related отказов.
+
+В итоговом покрытии эти две секции считаются **WPO-exempt**, а не сломанными. Патч не назначает им фиктивные механические детали ради формального процента.
+
+## Покрытие
+
+Аудит выполнен по каноническому реестру IronRain BaS Arsenal Only:
+
+| Набор | WPO Full после патча | WPO-exempt | Ошибки |
+| --- | ---: | ---: | ---: |
+| Самостоятельные BaS firearms | 143 / 144 | 1 Gauss | 0 |
+| Все BaS-секции и оптические варианты | 1482 / 1484 | 2 Gauss | 0 |
+
+Все фактически назначенные детали существуют и имеют `repair_type` из WPO Overhauled. Патч не создаёт второй список разрешённого оружия и не меняет spawn/trader/loadout-политику IronRain BaS Arsenal Only.
+
+## Порядок установки
+
+Рекомендуемый порядок, сверху вниз по зависимостям и снизу вверх по приоритету перезаписи:
+
+```text
+Boomsticks and Sharpsticks
+Weapon Parts Overhaul
+Weapon Parts Overhaul Overhauled
+IronRain — BaS × WPO Compatibility
+```
+
+В MO2 поместите этот патч **после/ниже всех трёх зависимостей**, чтобы он имел наивысший приоритет. Новая игра не требуется, но перед изменением крупной оружейной сборки рекомендуется отдельное сохранение.
+
+## Установка
+
+1. Скачайте ZIP из [последнего GitHub Release](https://github.com/sephellive/ironrain-bas-wpo-compatibility/releases/latest).
+2. Установите архив как отдельный мод через Mod Organizer 2.
+3. Убедитесь, что корнем мода является папка `gamedata`.
+4. Поставьте патч после BaS, WPO и WPO Overhauled.
+
+Архив релиза начинается непосредственно с `gamedata/` и не содержит дополнительной wrapper-папки. Патч **не нужно** распаковывать поверх каталогов исходных аддонов.
+
+Для локального checkout доступен установщик шаблона:
 
 ```powershell
 ./tools/install.ps1 -GamePath "D:\Stalker\Anomaly-Test"
 ```
 
-The installer copies and updates this addon's files. It does not delete the game's existing `gamedata` or files belonging to other addons.
+Он копирует только файлы патча и не удаляет существующий `gamedata`. Для MO2 предпочтительна обычная установка release ZIP отдельным модом.
 
-To download and install the latest GitHub Release instead of the local files:
+## Проверка после установки
 
-```powershell
-./tools/install.ps1 -GamePath "D:\Stalker\Anomaly-Test" -Latest
+Минимальный smoke test:
+
+1. Открыть FN57 в WPO и убедиться, что отображаются ствол, УСМ и пружина.
+2. Проверить field strip/repair у `wpn_karabiner98k_silen98`.
+3. Сделать серию выстрелов из KS-23 и убедиться, что WPOO использует затворную/газовую ветку, а не pistol spring.
+4. Сравнить нагрев и нагар интегрально-глушёного Vintorez с оружием без глушителя.
+5. Открыть торговлю у Сахарова и проверить WPO parts restock после интервала пополнения.
+6. Загрузить старое сохранение и убедиться в отсутствии ошибок `tm_custom` в логе.
+
+Если игра падает, приложите `appdata/logs/xray_<user>.log`, версии трёх зависимостей и экспорт порядка модов MO2.
+
+## Совместимость и ограничения
+
+- Патч рассчитан на WPO Overhauled `1.0.6.3`; runtime-hook проверяет наличие ожидаемых публичных функций и не применяет отсутствующие обёртки.
+- Другой мод, полностью заменяющий те же WPOO handler-функции после этого патча, может отменить исправление.
+- Полные исходные Lua-файлы WPO/WPOO/BaS не распространяются.
+- Патч не балансирует цены, выпадение деталей, чистоту оружия, скорость износа или MCM-множители.
+- Патч не устанавливается автоматически в локальную сборку автора репозитория.
+
+## Структура
+
+```text
+gamedata/
+  configs/items/settings/mod_parts_zzzz_ir_bas_wpo_compat.ltx
+  configs/items/weapons/mod_w_ks23_zzzz_ir_bas_wpo_compat.ltx
+  scripts/zzzzzzzzzzzz_ir_bas_wpo_compat.script
 ```
 
-`-Latest` derives the repository from the `origin` remote. Public releases need no token. For a private repository, set `GH_TOKEN` or `GITHUB_TOKEN` to a token that can read the repository. Local installation never uses the GitHub API.
+DLTX-файлы дополняют исходные конфиги. Lua-файл содержит только независимые runtime-обёртки и не является копией исходного WPOO.
 
-## Development
+## Разработка и релизы
 
-Create a repository from this template, then clone it:
+Проверка дерева исходников:
 
 ```powershell
-git clone https://github.com/<owner>/<repository>.git
-cd <repository>
-git lfs install
+python tools/validate_addon.py
 ```
 
-Put only the files shipped by the addon under `gamedata/`. Add standard Anomaly directories such as `textures`, `meshes`, `sounds`, or `shaders` only when the addon needs them. The tracked `.gitkeep` files only preserve the starter directories and are excluded from release ZIPs.
+Каждый push в `master` запускает GitHub Actions из исходного шаблона, проверяет патч, упаковывает только `gamedata/` и публикует release ZIP.
 
-For DLTX, the filename must identify the original root LTX file: `mod_<base-file-name>_sep_<module>.ltx`. For example, a patch to `system.ltx` can be named `mod_system_sep_economy.ltx`. Place it beside the root file it patches. Do not use DLTX syntax unless the addon declares Modded Exes as a requirement.
+Репозиторий создан по шаблону [sephellive/sephellive-anomaly-addon-template](https://github.com/sephellive/sephellive-anomaly-addon-template).
 
-## Branching
+## Credits
 
-- `master` is stable and releasable.
-- `feature/*` is for development and testing.
+- Mich_Cartman и участники Boomsticks and Sharpsticks.
+- artifax/ahuyn и участники Weapon Parts Overhaul.
+- Flooduh — Weapon Parts Overhaul Overhauled.
+- TheMrDemonized и участники Anomaly Modded Exes/DLTX.
 
-## Releases
-
-Every push or merge to `master` runs GitHub Actions. The workflow packages `gamedata/`, creates version `v0.0.<run number>`, creates the matching Git tag and GitHub Release with generated notes, and uploads `<repository>-<version>.zip`.
-
-Rerunning the same workflow keeps the same version and replaces the release asset instead of creating a conflicting tag.
-
-## Git LFS
-
-The template tracks common binary game assets (`.dds`, `.ogf`, `.object`, `.ogg`, `.wav`, `.tga`, and `.png`) with Git LFS. Install Git LFS before adding those files and ensure CI has access to the LFS objects. Text files such as LTX, Lua scripts, Markdown, YAML, and PowerShell remain in normal Git history.
+Названия S.T.A.L.K.E.R., Anomaly и исходных аддонов принадлежат соответствующим авторам и правообладателям.
 
 ## License
 
-No license is selected by this template. Replace `LICENSE` with the license appropriate for your original work before publishing. Do not grant rights to game assets or third-party material you do not own.
+Оригинальный код этого compatibility patch распространяется по лицензии MIT. Исходные аддоны и игровые материалы не входят в репозиторий и сохраняют собственные условия распространения.

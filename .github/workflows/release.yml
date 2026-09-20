@@ -41,6 +41,7 @@ jobs:
             echo "::error::The repository must contain a gamedata directory."
             exit 1
           fi
+          python tools/validate_addon.py
 
       - name: Build addon ZIP
         env:

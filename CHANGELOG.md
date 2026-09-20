@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.0 — 2026-09-21
+
+- Replaced the centered per-character weapon diagnostic typewriter with stable one-shot phase messages.
+- Removed the 100 Hz diagnostic hold refresh loop from the active display path.
+- Added proper cancellation of the compatibility diagnostic timer on weapon actions and inventory changes.
+- Kept the original two diagnostic phases, timing, severity colors and inspection animation.
+
 ## 1.0.0 — 2026-09-21
 
 - Added a complete WPO parts set for BaS FN Five-seveN.

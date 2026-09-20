@@ -1,9 +1,11 @@
 -- IronRain BaS x WPO Compatibility
 -- Runtime glue only. No upstream WPO/WPOO source files are redistributed.
 
-local PATCH_VERSION = "1.0.0"
+local PATCH_VERSION = "1.1.0"
 local patched = {}
 local retry_registered = false
+local diag_message_token = 0
+local diag_hold_event_id = nil
 
 local function is_integrally_suppressed(wpn)
     if not wpn or not wpn.section then return false end
@@ -169,18 +171,137 @@ local function patch_trader_bridge()
     return true
 end
 
+local function get_named_upvalue(fn, wanted_name)
+    if type(fn) ~= "function" or not debug or not debug.getupvalue then return nil, nil end
+    local index = 1
+    while true do
+        local name, value = debug.getupvalue(fn, index)
+        if not name then return nil, nil end
+        if name == wanted_name then return index, value end
+        index = index + 1
+    end
+end
+
+local function set_named_upvalue(fn, wanted_name, value)
+    if not debug or not debug.setupvalue then return false end
+    local index = get_named_upvalue(fn, wanted_name)
+    if not index then return false end
+    return debug.setupvalue(fn, index, value) == wanted_name
+end
+
+local function show_diag_message(text, time_sec, color)
+    text = tostring(text or "")
+    time_sec = time_sec or 0.25
+
+    if actor_menu and actor_menu.set_msg then
+        local ok = pcall(actor_menu.set_msg, 1, text, time_sec, color)
+        if ok then return true end
+    end
+    if news_manager and news_manager.send_tip and db.actor then
+        local ok = pcall(
+            news_manager.send_tip,
+            db.actor,
+            text,
+            nil,
+            "swiss_knife",
+            math.floor(time_sec * 1000)
+        )
+        if ok then return true end
+    end
+    return false
+end
+
+local function stable_diag_segments(segments, hold_time, final_color, on_done)
+    diag_message_token = diag_message_token + 1
+    local token = diag_message_token
+    local text = ""
+    for _, segment in ipairs(segments or {}) do
+        text = text .. tostring(segment.text or "")
+    end
+
+    local duration = tonumber(hold_time) or 0.25
+    show_diag_message(text, duration, final_color)
+
+    diag_hold_event_id = "hold_" .. tostring(token)
+    CreateTimeEvent("ir_wpo_diag", diag_hold_event_id, duration, function()
+        if token ~= diag_message_token then return true end
+        diag_hold_event_id = nil
+        show_diag_message(" ", 0.05, GetARGB(0xff, 0xdc, 0xdc, 0xdc))
+        if on_done then on_done() end
+        return true
+    end)
+end
+
+local function cancel_stable_diag()
+    diag_message_token = diag_message_token + 1
+    if diag_hold_event_id and RemoveTimeEvent then
+        pcall(RemoveTimeEvent, "ir_wpo_diag", diag_hold_event_id)
+    end
+    if RemoveTimeEvent then
+        pcall(RemoveTimeEvent, "wpo_diag", "gap_p2")
+    end
+    diag_hold_event_id = nil
+    show_diag_message(" ", 0.05, GetARGB(0xff, 0xdc, 0xdc, 0xdc))
+end
+
+local function patch_weapon_diagnostic()
+    local module = _G.zzzz_wpo_weapon_diag
+    if patched.weapon_diag or not module or type(module.on_key_press) ~= "function" then
+        return patched.weapon_diag
+    end
+    if not debug or not debug.getupvalue or not debug.setupvalue then return false end
+
+    local _, begin_inspect = get_named_upvalue(module.on_key_press, "begin_inspect")
+    if type(begin_inspect) ~= "function" then return false end
+
+    local _, run_diag_phase1 = get_named_upvalue(begin_inspect, "run_diag_phase1")
+    if type(run_diag_phase1) ~= "function" then return false end
+
+    local phase1_ok = set_named_upvalue(run_diag_phase1, "start_type_segments", stable_diag_segments)
+    local missing_parts_ok = set_named_upvalue(begin_inspect, "start_type_segments", stable_diag_segments)
+    if not phase1_ok or not missing_parts_ok then return false end
+
+    local interrupt_index, original_interrupt = get_named_upvalue(module.on_game_start, "on_action_interrupt")
+    if not interrupt_index or type(original_interrupt) ~= "function" then return false end
+
+    local interrupt_events = {
+        "actor_on_weapon_fired",
+        "actor_on_weapon_zoom_in",
+        "actor_on_weapon_zoom_out",
+        "actor_on_weapon_reload",
+        "actor_on_item_drop",
+        "actor_on_item_equip",
+        "actor_on_item_take",
+    }
+    local wrapped_interrupt = function(...)
+        cancel_stable_diag()
+        return original_interrupt(...)
+    end
+
+    for _, event_name in ipairs(interrupt_events) do
+        UnregisterScriptCallback(event_name, original_interrupt)
+        RegisterScriptCallback(event_name, wrapped_interrupt)
+    end
+    debug.setupvalue(module.on_game_start, interrupt_index, wrapped_interrupt)
+
+    patched.weapon_diag = true
+    return true
+end
+
 local function apply_runtime_patch()
     patch_barrel_heat()
     patch_advanced_wear()
     patch_gas_tube()
     patch_pistol_spring()
     patch_trader_bridge()
+    patch_weapon_diagnostic()
 
     return patched.barrel
         and patched.advanced_wear
         and patched.gas_tube
         and patched.pistol_spring
         and patched.trader
+        and patched.weapon_diag
 end
 
 local function retry_runtime_patch()

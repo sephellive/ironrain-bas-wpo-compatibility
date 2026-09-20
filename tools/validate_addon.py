@@ -55,6 +55,9 @@ for token in (
     "calculate_realistic_spring_rpm",
     "yan_stalker_sakharov",
     "m_data.tm_custom = nil",
+    "stable_diag_segments",
+    "start_type_segments",
+    "cancel_stable_diag",
 ):
     if token not in runtime:
         fail(f"missing runtime compatibility hook: {token}")
